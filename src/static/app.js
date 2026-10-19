@@ -3,6 +3,21 @@ document.addEventListener("DOMContentLoaded", () => {
   const activitySelect = document.getElementById("activity");
   const signupForm = document.getElementById("signup-form");
   const messageDiv = document.getElementById("message");
+  const loginForm = document.getElementById("login-form");
+  const loginToggle = document.getElementById("login-toggle");
+  const logoutButton = document.getElementById("logout-button");
+  const authStatus = document.getElementById("auth-status");
+  const loginMessage = document.getElementById("login-message");
+  let isAdmin = false;
+
+  function updateAuthState(username = null) {
+    isAdmin = Boolean(username);
+    authStatus.textContent = isAdmin ? `Signed in as ${username}` : "Public view";
+    loginToggle.classList.toggle("hidden", isAdmin);
+    loginForm.classList.add("hidden");
+    logoutButton.classList.toggle("hidden", !isAdmin);
+    signupForm.closest("section").classList.toggle("hidden", !isAdmin);
+  }
 
   // Function to fetch activities from API
   async function fetchActivities() {
@@ -12,18 +27,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       activitiesList.innerHTML = "";
+      activitySelect.replaceChildren(new Option("-- Select an activity --", ""));
 
       // Populate activities list
       Object.entries(activities).forEach(([name, details]) => {
         const activityCard = document.createElement("div");
         activityCard.className = "activity-card";
 
-        const spotsLeft =
-          details.max_participants - details.participants.length;
+        const participantCount = details.participant_count;
+        const spotsLeft = details.max_participants - participantCount;
 
         // Create participants HTML with delete icons instead of bullet points
-        const participantsHTML =
-          details.participants.length > 0
+        const participantsHTML = isAdmin
+          ? details.participants.length > 0
             ? `<div class="participants-section">
               <h5>Participants:</h5>
               <ul class="participants-list">
@@ -35,16 +51,15 @@ document.addEventListener("DOMContentLoaded", () => {
                   .join("")}
               </ul>
             </div>`
-            : `<p><em>No participants yet</em></p>`;
+            : `<p><em>No participants yet</em></p>`
+          : "";
 
         activityCard.innerHTML = `
           <h4>${name}</h4>
           <p>${details.description}</p>
           <p><strong>Schedule:</strong> ${details.schedule}</p>
           <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
-          <div class="participants-container">
-            ${participantsHTML}
-          </div>
+          ${isAdmin ? `<div class="participants-container">${participantsHTML}</div>` : ""}
         `;
 
         activitiesList.appendChild(activityCard);
@@ -66,6 +81,44 @@ document.addEventListener("DOMContentLoaded", () => {
       console.error("Error fetching activities:", error);
     }
   }
+
+  loginToggle.addEventListener("click", () => {
+    loginForm.classList.toggle("hidden");
+    loginMessage.textContent = "";
+  });
+
+  loginForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(loginForm);
+
+    try {
+      const response = await fetch("/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: formData.get("username"),
+          password: formData.get("password"),
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        loginMessage.textContent = result.detail || "Unable to sign in";
+        return;
+      }
+      updateAuthState(result.username);
+      loginForm.reset();
+      await fetchActivities();
+    } catch (error) {
+      loginMessage.textContent = "Unable to sign in. Please try again.";
+      console.error("Error signing in:", error);
+    }
+  });
+
+  logoutButton.addEventListener("click", async () => {
+    await fetch("/auth/logout", { method: "POST" });
+    updateAuthState();
+    await fetchActivities();
+  });
 
   // Handle unregister functionality
   async function handleUnregister(event) {
@@ -155,6 +208,15 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Initialize app
-  fetchActivities();
+  // Initialize the visible controls from the current session.
+  fetch("/auth/me")
+    .then((response) => (response.ok ? response.json() : null))
+    .then((user) => {
+      updateAuthState(user?.username);
+      return fetchActivities();
+    })
+    .catch(() => {
+      updateAuthState();
+      fetchActivities();
+    });
 });

@@ -5,19 +5,106 @@ A super simple FastAPI application that allows students to view and sign up
 for extracurricular activities at Mergington High School.
 """
 
-from fastapi import FastAPI, HTTPException
+import json
+import os
+import secrets
+from pathlib import Path
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
-import os
-from pathlib import Path
+from starlette.middleware.sessions import SessionMiddleware
+
+from .auth import verify_password
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("SESSION_SECRET", secrets.token_urlsafe(32)),
+    max_age=8 * 60 * 60,
+    same_site="lax",
+    https_only=os.getenv("SESSION_HTTPS_ONLY", "false").lower() == "true",
+)
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
+TEACHER_ACCOUNTS_FILE = Path(os.getenv(
+    "TEACHER_ACCOUNTS_FILE", current_dir / "teacher_accounts.json"
+))
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+def load_teacher_accounts():
+    try:
+        with TEACHER_ACCOUNTS_FILE.open(encoding="utf-8") as accounts_file:
+            data = json.load(accounts_file)
+    except FileNotFoundError:
+        return []
+    except (OSError, json.JSONDecodeError) as error:
+        raise HTTPException(status_code=503, detail="Teacher accounts are unavailable") from error
+
+    teachers = data.get("teachers") if isinstance(data, dict) else None
+    if not isinstance(teachers, list):
+        raise HTTPException(status_code=503, detail="Teacher accounts are misconfigured")
+    return teachers
+
+
+def get_current_teacher(request: Request):
+    username = request.session.get("username")
+    if not username:
+        raise HTTPException(status_code=401, detail="Staff login required")
+
+    teachers = load_teacher_accounts()
+    if not any(teacher.get("username") == username for teacher in teachers
+               if isinstance(teacher, dict)):
+        request.session.clear()
+        raise HTTPException(status_code=401, detail="Staff login required")
+    return username
+
+
+def get_optional_teacher(request: Request):
+    if not request.session.get("username"):
+        return None
+    try:
+        return get_current_teacher(request)
+    except HTTPException as error:
+        if error.status_code == 401:
+            return None
+        raise
+
+
+@app.post("/auth/login")
+def login(credentials: LoginRequest, request: Request):
+    teacher = next((account for account in load_teacher_accounts()
+                    if isinstance(account, dict)
+                    and account.get("username") == credentials.username), None)
+    if teacher is None or not verify_password(
+            credentials.password, teacher.get("password_hash", "")):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    request.session.clear()
+    request.session["username"] = credentials.username
+    return {"username": credentials.username, "role": "admin"}
+
+
+@app.post("/auth/logout")
+def logout(request: Request):
+    request.session.clear()
+    return {"message": "Logged out"}
+
+
+@app.get("/auth/me")
+def current_user(username: str = Depends(get_current_teacher)):
+    return {"username": username, "role": "admin"}
 
 # In-memory activity database
 activities = {
@@ -84,12 +171,21 @@ def root():
 
 
 @app.get("/activities")
-def get_activities():
-    return activities
+def get_activities(username: str = Depends(get_optional_teacher)):
+    response = {}
+    for name, details in activities.items():
+        activity = {key: value for key, value in details.items()
+                    if key != "participants"}
+        activity["participant_count"] = len(details["participants"])
+        if username:
+            activity["participants"] = list(details["participants"])
+        response[name] = activity
+    return response
 
 
 @app.post("/activities/{activity_name}/signup")
-def signup_for_activity(activity_name: str, email: str):
+def signup_for_activity(activity_name: str, email: str,
+                        username: str = Depends(get_current_teacher)):
     """Sign up a student for an activity"""
     # Validate activity exists
     if activity_name not in activities:
@@ -111,7 +207,8 @@ def signup_for_activity(activity_name: str, email: str):
 
 
 @app.delete("/activities/{activity_name}/unregister")
-def unregister_from_activity(activity_name: str, email: str):
+def unregister_from_activity(activity_name: str, email: str,
+                             username: str = Depends(get_current_teacher)):
     """Unregister a student from an activity"""
     # Validate activity exists
     if activity_name not in activities:
