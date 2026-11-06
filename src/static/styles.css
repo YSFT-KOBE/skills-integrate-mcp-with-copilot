@@ -28,6 +28,35 @@ header h1 {
   margin-bottom: 10px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+#login-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  width: min(100% - 32px, 320px);
+  margin: 16px auto 0;
+  text-align: left;
+}
+
+#login-form input {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #d0d7de;
+  border-radius: 4px;
+  font-size: 16px;
+}
+
+#login-message {
+  min-height: 1.5em;
+}
+
 main {
   display: flex;
   flex-wrap: wrap;
@@ -189,6 +218,10 @@ button:hover {
 }
 
 .hidden {
+  display: none;
+}
+
+section.hidden {
   display: none;
 }
 

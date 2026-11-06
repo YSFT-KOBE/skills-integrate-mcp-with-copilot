@@ -5,20 +5,21 @@ A super simple FastAPI application that allows students to view and sign up for 
 ## Features
 
 - View all available extracurricular activities
-- Sign up for activities
+- Staff sign-in and administrator-only activity registration management
+- Public activity browsing without exposing participant details
 
 ## Getting Started
 
-1. Install the dependencies:
+1. Install the dependencies from the repository root:
 
    ```
-   pip install fastapi uvicorn
+   pip install -r requirements.txt
    ```
 
 2. Run the application:
 
    ```
-   python app.py
+   uvicorn src.app:app --reload
    ```
 
 3. Open your browser and go to:
@@ -29,8 +30,22 @@ A super simple FastAPI application that allows students to view and sign up for 
 
 | Method | Endpoint                                                          | Description                                                         |
 | ------ | ----------------------------------------------------------------- | ------------------------------------------------------------------- |
-| GET    | `/activities`                                                     | Get all activities with their details and current participant count |
-| POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Sign up for an activity                                             |
+| GET    | `/activities`                                                     | List activities; participant details are included for staff only   |
+| POST   | `/auth/login`                                                      | Sign in as a teacher                                                |
+| GET    | `/auth/me`                                                         | Get the current staff session                                       |
+| POST   | `/auth/logout`                                                     | End the current session                                             |
+| POST   | `/activities/{activity_name}/signup?email=student@mergington.edu` | Register a student (staff only)                                     |
+| DELETE | `/activities/{activity_name}/unregister?email=student@mergington.edu` | Unregister a student (staff only)                                |
+
+## Staff Accounts
+
+Create a teacher account from the repository root. The password is stored as a salted PBKDF2 hash in a local JSON file that is excluded from Git:
+
+```
+python src/create_teacher_account.py
+```
+
+Set `SESSION_SECRET` to a long, random value before deployment so sessions remain valid across restarts and workers. Serve the site over HTTPS and set `SESSION_HTTPS_ONLY=true` in production. The local fallback secret is generated at startup and is intended only for development.
 
 ## Data Model
 
@@ -47,4 +62,4 @@ The application uses a simple data model with meaningful identifiers:
    - Name
    - Grade level
 
-All data is stored in memory, which means data will be reset when the server restarts.
+Activity data is stored in memory, which means registrations reset when the server restarts. Teacher credentials are stored separately in `src/teacher_accounts.json`.
